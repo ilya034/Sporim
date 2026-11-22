@@ -3,6 +3,7 @@ import { Layout } from './components/Layout'
 import { EventDetailsPage } from './pages/EventDetailsPage'
 import { EventsPage } from './pages/EventsPage'
 import { NotFoundPage } from './pages/NotFoundPage'
+import { WalletPage } from './pages/WalletPage'
 
 const router = createBrowserRouter([
   {
@@ -11,6 +12,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <EventsPage /> },
       { path: 'events/:eventId', element: <EventDetailsPage /> },
+      { path: 'wallet', element: <WalletPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

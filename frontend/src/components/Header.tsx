@@ -1,6 +1,8 @@
 import { Link, NavLink } from 'react-router-dom'
+import { useWallet } from './WalletProvider'
 
 export function Header() {
+  const { wallet, loading, isDemo } = useWallet()
   return (
     <header className="site-header">
       <div className="header-inner">
@@ -12,13 +14,15 @@ export function Header() {
         </Link>
 
         <nav className="main-nav" aria-label="Основная навигация">
-          <NavLink to="/">События</NavLink>
+          <NavLink to="/" end>События</NavLink>
+          <NavLink to="/wallet">Кошелёк</NavLink>
           <a href="#how-it-works">Как это работает</a>
         </nav>
 
-        <button className="button button-ghost header-login" type="button">
-          Войти
-        </button>
+        <Link className="header-wallet" to="/wallet" aria-label={wallet ? `Баланс: ${wallet.balance} игровых баллов${isDemo ? ', демо' : ''}` : 'Открыть кошелёк'}>
+          <span>{isDemo ? 'Демо-баланс' : 'Игровой баланс'}</span>
+          <strong>{loading ? '…' : wallet ? `${new Intl.NumberFormat('ru-RU').format(wallet.balance)} б.` : 'Кошелёк'}</strong>
+        </Link>
       </div>
     </header>
   )

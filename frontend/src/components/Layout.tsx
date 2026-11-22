@@ -1,10 +1,11 @@
 import { Outlet } from 'react-router-dom'
 import { Header } from './Header'
 import { ScrollToTop } from './ScrollToTop'
+import { WalletProvider } from './WalletProvider'
 
 export function Layout() {
   return (
-    <div className="app-shell">
+    <WalletProvider><div className="app-shell">
       <ScrollToTop />
       <Header />
       <main>
@@ -16,6 +17,6 @@ export function Layout() {
           <span>Учебный MVP · 2026</span>
         </div>
       </footer>
-    </div>
+    </div></WalletProvider>
   )
 }
