@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Sporim.Api/Sporim.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Sporim.Api.Tests/Sporim.Api.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,1144 @@
+openapi: 3.0.3
+info:
+  title: СПОРИМ — REST API Контракт (MVP)
+  version: 1.0.0
+  description: |
+    Единый контракт взаимодействия клиентского приложения (React + TypeScript) и серверного модульного монолита (ASP.NET Core) для платформы социальных прогнозов «СПОРИМ».
+    
+    Ключевые архитектурные инварианты, заложенные в контракт:
+    - Неизменяемость прогнозов и серверная фиксация времени (UTC `clock_timestamp()`).
+    - Гарантия идемпотентности при отправке прогноза через заголовок `Idempotency-Key` (сценарии А5 и А6).
+    - Гибридная проверка дедлайнов приёма (`acceptUntil`): код `EVENT_CLOSED` при `409 Conflict` (сценарий А4).
+    - Полный цикл CRUD для черновиков событий в разделе модератора.
+servers:
+  - url: http://localhost:5000
+    description: Локальный сервер разработки / Mock API
+  - url: https://api.sporim.ru
+    description: Production сервер
+
+tags:
+  - name: Auth
+    description: Вход в 1 клик (OAuth2 / Email OTP) и управление сессией (JWT)
+  - name: Events
+    description: Публичный каталог событий и детальная карточка спора
+  - name: Predictions
+    description: Фиксация прогнозов с защитой от дублей и история в портфеле
+  - name: Proofs
+    description: Публичные неизменяемые пруф-страницы (/p/{shortCode})
+  - name: Profile & Wallet
+    description: Профиль игрока, баланс игровой валюты, журнал операций (Ledger) и лидерборд
+  - name: Admin & Moderation
+    description: CRUD черновиков событий, публикация и резолюция официальных исходов
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT-токен авторизованного пользователя (роли user, moderator, admin)
+
+  parameters:
+    EventIdParam:
+      name: eventId
+      in: path
+      required: true
+      description: Уникальный идентификатор события (UUID)
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Уникальный ключ запроса (UUID v4), удерживаемый клиентом в useRef для безопасного повтора при обрыве сети (сценарии А5, А6)
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Role:
+      type: string
+      enum: [user, moderator, admin]
+      example: user
+
+    EventCategory:
+      type: string
+      enum: [esports, pop_culture, streamers, macro, student_ugc]
+      example: esports
+
+    EventStatus:
+      type: string
+      enum: [draft, on_moderation, open, awaiting_result, resolved, rejected, canceled]
+      description: |
+        - `draft` — черновик модератора (доступен полный CRUD)
+        - `on_moderation` — предложен пользователем (UGC), ожидает проверки
+        - `open` — приём прогнозов открыт (Состояние карточки 1 и 2)
+        - `awaiting_result` — приём закрыт по дедлайну acceptUntil, ожидается итог (Состояние 3)
+        - `resolved` — событие завершено, опубликован официальный исход (Состояние 4)
+      example: open
+
+    LedgerReason:
+      type: string
+      enum: [welcome_bonus, prediction_stake, prediction_payout, refund]
+      example: prediction_stake
+
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_ERROR
+        - UNAUTHORIZED
+        - FORBIDDEN
+        - EVENT_NOT_FOUND
+        - PROOF_NOT_FOUND
+        - EVENT_CLOSED
+        - INSUFFICIENT_BALANCE
+        - INVALID_DRAFT_STATE
+        - INTERNAL_ERROR
+      example: EVENT_CLOSED
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          example: Приём прогнозов на это событие уже закрыт.
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          nullable: true
+          example:
+            stake: ["Недостаточно баллов на балансе"]
+
+    OutcomeDto:
+      type: object
+      required: [id, code, title, sortOrder]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+        code:
+          type: string
+          example: "YES"
+        title:
+          type: string
+          example: "Да — Команда А победит"
+        sortOrder:
+          type: integer
+          example: 1
+        consensusPercent:
+          type: number
+          format: float
+          nullable: true
+          description: Доля участников (в %), выбравших данный исход
+          example: 64.5
+
+    ResolutionDto:
+      type: object
+      required: [winningOutcomeId, factSummary, resolvedAt]
+      properties:
+        winningOutcomeId:
+          type: string
+          format: uuid
+          example: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+        factSummary:
+          type: string
+          example: "Команда А выиграла финальный матч со счётом 3:1."
+        sourceUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: "https://liquipedia.net/dota2/Main_Event"
+        resolvedAt:
+          type: string
+          format: date-time
+          example: "2026-10-18T20:00:00Z"
+
+    UserPredictionSummaryDto:
+      type: object
+      required: [id, shortCode, proofUrl, outcomeId, outcomeTitle, stakeAmount, createdAt]
+      description: Сохранённый прогноз текущего пользователя (для отображения в карточке события и после сохранения)
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+        shortCode:
+          type: string
+          example: "k9x2mP8q"
+        proofUrl:
+          type: string
+          example: "/p/k9x2mP8q"
+        outcomeId:
+          type: string
+          format: uuid
+          example: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+        outcomeTitle:
+          type: string
+          example: "Да — Команда А победит"
+        stakeAmount:
+          type: integer
+          format: int64
+          example: 250
+        estimatedProbability:
+          type: integer
+          minimum: 1
+          maximum: 99
+          nullable: true
+          example: 70
+        thesisText:
+          type: string
+          maxLength: 500
+          nullable: true
+          example: "Команда А не проиграла ни одной карты в верхней сетке."
+        createdAt:
+          type: string
+          format: date-time
+          description: Неизменяемое серверное время фиксации прогноза (UTC)
+          example: "2026-10-18T09:47:00Z"
+        isWin:
+          type: boolean
+          nullable: true
+          description: Заполняется после перехода события в статус resolved
+          example: true
+        payoutAmount:
+          type: integer
+          format: int64
+          nullable: true
+          example: 420
+
+    EventCardItemDto:
+      type: object
+      required: [id, slug, category, title, descriptionSnippet, status, eventDate, acceptUntil, outcomes, participantsCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        slug:
+          type: string
+          example: "team-a-vs-team-b-grand-final"
+        category:
+          $ref: '#/components/schemas/EventCategory'
+        title:
+          type: string
+          example: "Победит ли команда А в финале турнира?"
+        descriptionSnippet:
+          type: string
+          example: "Финальный матч международного турнира по киберспорту. Команда A vs Команда B. Формат — до 3 побед."
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        eventDate:
+          type: string
+          format: date-time
+          example: "2026-10-18T15:00:00Z"
+        acceptUntil:
+          type: string
+          format: date-time
+          example: "2026-10-18T13:00:00Z"
+        participantsCount:
+          type: integer
+          example: 142
+        outcomes:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutcomeDto'
+        myPrediction:
+          $ref: '#/components/schemas/UserPredictionSummaryDto'
+          nullable: true
+
+    EventDetailsDto:
+      allOf:
+        - $ref: '#/components/schemas/EventCardItemDto'
+        - type: object
+          required: [description, resolutionRules]
+          properties:
+            description:
+              type: string
+              example: "Финальный матч международного турнира по киберспорту. Команда A vs Команда B. Формат — до 3 побед (Bo5)."
+            resolutionRules:
+              type: string
+              example: "Исход «Да» фиксируется, если Команда А одержит победу в серии (3:0, 3:1 или 3:2) согласно официальному протоколу турнира."
+            resolution:
+              $ref: '#/components/schemas/ResolutionDto'
+              nullable: true
+
+    EventCatalogResponse:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventCardItemDto'
+        total:
+          type: integer
+          example: 48
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+
+    CreatePredictionRequest:
+      type: object
+      required: [outcomeId, stake]
+      properties:
+        outcomeId:
+          type: string
+          format: uuid
+          description: Выбранный вариант исхода
+          example: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+        stake:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Целое число игровых баллов для ставки
+          example: 250
+        thesis:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Необязательный аргумент автора (до 500 символов) для карточки шеринга
+          example: "У Команды А сильнее драфты и винрейт на решающих картах."
+        estimatedProbability:
+          type: integer
+          minimum: 1
+          maximum: 99
+          nullable: true
+          description: Опциональная оценка вероятности в % (для песочницы вероятностей и расчёта Brier Score)
+          example: 75
+
+    CreatePredictionResponse:
+      type: object
+      required: [prediction, updatedBalance, isDuplicateReplay]
+      properties:
+        prediction:
+          $ref: '#/components/schemas/UserPredictionSummaryDto'
+        updatedBalance:
+          type: integer
+          format: int64
+          description: Остаток игровых баллов на балансе после списания ставки
+          example: 750
+        isDuplicateReplay:
+          type: boolean
+          description: Флаг того, что вернулся уже ранее сохранённый прогноз (сценарии А5 и А6) без повторного списания баллов
+          example: false
+
+    PublicProofDto:
+      type: object
+      required: [shortCode, author, event, outcomeTitle, stakeAmount, createdAt]
+      properties:
+        shortCode:
+          type: string
+          example: "k9x2mP8q"
+        author:
+          type: object
+          required: [username, displayName, rankCode, winRate]
+          properties:
+            username:
+              type: string
+              example: "vanya_analyst"
+            displayName:
+              type: string
+              example: "Ваня"
+            avatarUrl:
+              type: string
+              nullable: true
+            rankCode:
+              type: string
+              example: "strategist"
+            winRate:
+              type: number
+              format: float
+              example: 68.4
+        event:
+          type: object
+          required: [id, slug, title, category, status, eventDate]
+          properties:
+            id:
+              type: string
+              format: uuid
+            slug:
+              type: string
+            title:
+              type: string
+              example: "Победит ли команда А в финале турнира?"
+            category:
+              $ref: '#/components/schemas/EventCategory'
+            status:
+              $ref: '#/components/schemas/EventStatus'
+            eventDate:
+              type: string
+              format: date-time
+        outcomeTitle:
+          type: string
+          example: "Да — Команда А победит"
+        stakeAmount:
+          type: integer
+          format: int64
+          example: 250
+        estimatedProbability:
+          type: integer
+          nullable: true
+          example: 75
+        thesisText:
+          type: string
+          nullable: true
+          example: "У Команды А сильнее драфты и винрейт на решающих картах."
+        createdAt:
+          type: string
+          format: date-time
+          description: Неизменяемый серверный таймстемп прогноза
+          example: "2026-10-18T09:47:00Z"
+        ogImageUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: "https://cdn.sporim.ru/og/k9x2mP8q.png"
+        resolution:
+          $ref: '#/components/schemas/ResolutionDto'
+          nullable: true
+        isWin:
+          type: boolean
+          nullable: true
+          example: true
+
+    WalletSummaryDto:
+      type: object
+      required: [balance, updatedAt, transactions]
+      properties:
+        balance:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 1250
+        updatedAt:
+          type: string
+          format: date-time
+        transactions:
+          type: array
+          items:
+            type: object
+            required: [id, amountDelta, reason, referenceType, referenceId, createdAt]
+            properties:
+              id:
+                type: string
+                format: uuid
+              amountDelta:
+                type: integer
+                format: int64
+                description: Положительный для бонусов/выплат, отрицательный для ставок
+                example: -250
+              reason:
+                $ref: '#/components/schemas/LedgerReason'
+              referenceType:
+                type: string
+                enum: [event, prediction, system]
+              referenceId:
+                type: string
+                format: uuid
+              description:
+                type: string
+                example: "Прогноз на событие: Победит ли команда А в финале турнира?"
+              createdAt:
+                type: string
+                format: date-time
+
+    UserStatsDto:
+      type: object
+      required: [totalPredictions, resolvedPredictions, winsCount, winRate, currentStreak, maxStreak, rankCode]
+      properties:
+        totalPredictions:
+          type: integer
+          example: 24
+        resolvedPredictions:
+          type: integer
+          example: 19
+        winsCount:
+          type: integer
+          example: 13
+        winRate:
+          type: number
+          format: float
+          example: 68.42
+        brierScore:
+          type: number
+          format: float
+          nullable: true
+          example: 0.1845
+        currentStreak:
+          type: integer
+          example: 4
+        maxStreak:
+          type: integer
+          example: 7
+        rankCode:
+          type: string
+          example: "strategist"
+
+    UserProfileDto:
+      type: object
+      required: [id, username, displayName, role, balance, stats, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          example: "vanya_analyst"
+        displayName:
+          type: string
+          example: "Ваня"
+        avatarUrl:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/Role'
+        balance:
+          type: integer
+          format: int64
+          example: 1250
+        stats:
+          $ref: '#/components/schemas/UserStatsDto'
+        createdAt:
+          type: string
+          format: date-time
+
+    DraftEventRequest:
+      type: object
+      required: [title, category, description, resolutionRules, eventDate, acceptUntil, outcomes]
+      properties:
+        title:
+          type: string
+          minLength: 10
+          maxLength: 255
+          example: "Выйдет ли второй трейлер GTA VI до конца ноября 2026?"
+        slug:
+          type: string
+          maxLength: 160
+          nullable: true
+          example: "gta-vi-second-trailer-nov-2026"
+        category:
+          $ref: '#/components/schemas/EventCategory'
+        description:
+          type: string
+          example: "Спор о дате публикации второго официального трейлера GTA VI на канале Rockstar Games."
+        resolutionRules:
+          type: string
+          example: "Исход «Да» фиксируется при появлении ролика на официальном YouTube-канале Rockstar Games до 30.11.2026 23:59 UTC."
+        eventDate:
+          type: string
+          format: date-time
+          example: "2026-11-30T23:59:59Z"
+        acceptUntil:
+          type: string
+          format: date-time
+          description: Должен быть меньше или равен eventDate (CHECK accept_until <= event_date)
+          example: "2026-11-25T23:59:59Z"
+        outcomes:
+          type: array
+          minItems: 2
+          items:
+            type: object
+            required: [code, title, sortOrder]
+            properties:
+              code:
+                type: string
+                example: "YES"
+              title:
+                type: string
+                example: "Да — Трейлер выйдет"
+              sortOrder:
+                type: integer
+                example: 1
+
+    PatchDraftEventRequest:
+      type: object
+      description: Частичное обновление черновика события (только для статуса draft)
+      properties:
+        title:
+          type: string
+          maxLength: 255
+        category:
+          $ref: '#/components/schemas/EventCategory'
+        description:
+          type: string
+        resolutionRules:
+          type: string
+        eventDate:
+          type: string
+          format: date-time
+        acceptUntil:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [draft, open]
+          description: Позволяет опубликовать черновик (перевести из draft в open)
+        outcomes:
+          type: array
+          minItems: 2
+          items:
+            type: object
+            required: [code, title, sortOrder]
+            properties:
+              code:
+                type: string
+              title:
+                type: string
+              sortOrder:
+                type: integer
+
+    ResolveEventRequest:
+      type: object
+      required: [winningOutcomeId, factSummary]
+      properties:
+        winningOutcomeId:
+          type: string
+          format: uuid
+          description: Идентификатор победившего исхода
+        factSummary:
+          type: string
+          minLength: 5
+          description: Официальное описание свершившегося факта
+          example: "Команда А выиграла финальный матч со счётом 3:1."
+        sourceUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Ссылка на пруф-источник официального результата
+          example: "https://liquipedia.net/dota2/Main_Event"
+
+paths:
+  /api/v1/auth/oauth/{provider}:
+    post:
+      tags: [Auth]
+      summary: Вход в 1 клик через внешний провайдер (Telegram / VK)
+      description: При первом входе создаёт пользователя в `users` и начисляет стартовый баланс в `wallets` и `ledger` (`welcome_bonus`).
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [telegram, vk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [externalAuthToken]
+              properties:
+                externalAuthToken:
+                  type: string
+                  description: Подписанный payload от виджета авторизации
+      responses:
+        '200':
+          description: Успешная авторизация и выдача JWT
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken, user, isNewUser]
+                properties:
+                  accessToken:
+                    type: string
+                  isNewUser:
+                    type: boolean
+                  user:
+                    $ref: '#/components/schemas/UserProfileDto'
+
+  /api/v1/auth/email/request-code:
+    post:
+      tags: [Auth]
+      summary: Запрос одноразового кода на почту (сценарий AuthForm из макетов)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Код отправлен на указанный адрес
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cooldownSeconds]
+                properties:
+                  cooldownSeconds:
+                    type: integer
+                    example: 60
+
+  /api/v1/auth/email/verify-code:
+    post:
+      tags: [Auth]
+      summary: Подтверждение одноразового кода из письма и получение JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  example: "482910"
+      responses:
+        '200':
+          description: Успешный вход
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken, user]
+                properties:
+                  accessToken:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/UserProfileDto'
+        '400':
+          description: Неверный или истёкший код
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/events:
+    get:
+      tags: [Events]
+      summary: Загрузить ленту событий с учётом поиска, категории и фильтра активности
+      description: Доступно гостям и авторизованным игрокам. При передаче JWT в каждую карточку подставляется `myPrediction`, если пользователь уже делал прогноз на событие.
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Полнотекстовый поиск по названию и описанию события
+          schema:
+            type: string
+        - name: category
+          in: query
+          required: false
+          description: Фильтр по рубрике (если не указан — возвращаются все категории)
+          schema:
+            $ref: '#/components/schemas/EventCategory'
+        - name: onlyActive
+          in: query
+          required: false
+          description: Переключатель Switch «Только активные» (статус `open` и `acceptUntil > now`)
+          schema:
+            type: boolean
+            default: false
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EventStatus'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Каталог событий успешно загружен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventCatalogResponse'
+
+  /api/v1/events/{eventId}:
+    get:
+      tags: [Events]
+      summary: Загрузить полную карточку события с исходами, дедлайном, статусом и фактом
+      description: |
+        Реализует Lazy-вычисление дедлайна (Задача 2): если в БД статус `open`, но `clock_timestamp() >= accept_until`, сервер возвращает эффективный статус `awaiting_result` («Ожидается результат»).
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      responses:
+        '200':
+          description: Детальная карточка события
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetailsDto'
+        '404':
+          description: Событие не найдено (сценарий А7)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/events/{eventId}/predictions:
+    post:
+      tags: [Predictions]
+      summary: Отправить подтверждённый прогноз на событие (Задача 1, сценарии А1–А6)
+      description: |
+        Атомарно списывает игровые баллы в `ledger`/`wallets` и фиксирует прогноз в `predictions` с серверным временем `clock_timestamp()`.
+        - Если прогноз с таким `Idempotency-Key` или парой `(user_id, event_id)` уже существует (сценарии А5 при обрыве связи и А6 при повторной отправке), сервер **не списывает баллы повторно** и **не перезаписывает время**, а возвращает `200 OK` с флагом `isDuplicateReplay: true` и исходным прогнозом.
+        - Если срок `acceptUntil` истёк до или во время запроса (сценарий А4), возвращается `409 Conflict` с кодом `EVENT_CLOSED`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePredictionRequest'
+      responses:
+        '201':
+          description: Прогноз успешно создан и зафиксирован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePredictionResponse'
+        '200':
+          description: Идемпотентный повтор (сценарии А5/А6) — возвращён ранее сохранённый прогноз с его изначальным временем и пруф-ссылкой
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePredictionResponse'
+        '400':
+          description: Ошибка валидации полей или недостаточно баллов на балансе (`INSUFFICIENT_BALANCE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: Пользователь не авторизован (сценарий А1 — фронтенд предлагает вход и возвращает к карточке)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Приём прогнозов закрыт по дедлайну (`EVENT_CLOSED` — сценарий А4)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/predictions/my:
+    get:
+      tags: [Predictions]
+      summary: Получить историю прогнозов текущего игрока (Портфель / Мои прогнозы)
+      description: Используется в разделе «Портфель» и для проверки сохранения прогноза после обрыва связи (сценарий А5).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Фильтр по состоянию события (`open`, `awaiting_result`, `resolved`)
+          schema:
+            $ref: '#/components/schemas/EventStatus'
+        - name: category
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EventCategory'
+      responses:
+        '200':
+          description: Список прогнозов игрока
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [prediction, eventTitle, eventSlug, eventCategory, eventStatus, eventDate]
+                  properties:
+                    prediction:
+                      $ref: '#/components/schemas/UserPredictionSummaryDto'
+                    eventId:
+                      type: string
+                      format: uuid
+                    eventTitle:
+                      type: string
+                    eventSlug:
+                      type: string
+                    eventCategory:
+                      $ref: '#/components/schemas/EventCategory'
+                    eventStatus:
+                      $ref: '#/components/schemas/EventStatus'
+                    eventDate:
+                      type: string
+                      format: date-time
+                    resolution:
+                      $ref: '#/components/schemas/ResolutionDto'
+                      nullable: true
+
+  /api/v1/proofs/{shortCode}:
+    get:
+      tags: [Proofs]
+      summary: Получить данные публичной пруф-страницы прогноза (/p/{shortCode})
+      description: Открытый эндпоинт (кэшируется в Redis), обеспечивающий работу публичной страницы `/p/{short_code}` с автором, исходом, тезисом и серверным временем фиксации.
+      parameters:
+        - name: shortCode
+          in: path
+          required: true
+          example: "k9x2mP8q"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Данные неизменяемого прогноза
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProofDto'
+        '404':
+          description: Пруф-ссылка не найдена (`PROOF_NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/me:
+    get:
+      tags: [Profile & Wallet]
+      summary: Получить профиль текущего пользователя, баланс и сводную статистику
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Профиль и игровая аналитика
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileDto'
+
+  /api/v1/wallet:
+    get:
+      tags: [Profile & Wallet]
+      summary: Получить баланс игровых баллов и историю операций (Ledger)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Состояние кошелька и список транзакций
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletSummaryDto'
+
+  /api/v1/users/{username}:
+    get:
+      tags: [Profile & Wallet]
+      summary: Публичный профиль игрока и его трек-рекорд (винрейт, Brier Score, история)
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: portfolioMode
+          in: query
+          required: false
+          description: Режим «Портфолио аналитика» (фильтр только по серьёзным темам `macro`)
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Публичный профиль пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileDto'
+
+  /api/v1/leaderboard:
+    get:
+      tags: [Profile & Wallet]
+      summary: Рейтинг игроков (общий и дружеский лидерборд по винрейту и очкам)
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EventCategory'
+      responses:
+        '200':
+          description: Таблица лидеров
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [rankPosition, username, displayName, winRate, winsCount, totalResolved, rankCode]
+                  properties:
+                    rankPosition:
+                      type: integer
+                      example: 1
+                    username:
+                      type: string
+                    displayName:
+                      type: string
+                    avatarUrl:
+                      type: string
+                      nullable: true
+                    winRate:
+                      type: number
+                      format: float
+                    winsCount:
+                      type: integer
+                    totalResolved:
+                      type: integer
+                    rankCode:
+                      type: string
+
+  /api/v1/admin/events:
+    get:
+      tags: [Admin & Moderation]
+      summary: "[CRUD: Read] Получить список черновиков и событий на модерации"
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EventStatus'
+      responses:
+        '200':
+          description: Список событий для панели модератора
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EventDetailsDto'
+
+    post:
+      tags: [Admin & Moderation]
+      summary: "[CRUD: Create] Создать новый черновик события в разделе модератора"
+      description: Проверяет название, минимум 2 исхода и условие `acceptUntil <= eventDate`. Создаёт запись в статусе `draft`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftEventRequest'
+      responses:
+        '201':
+          description: Черновик события успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetailsDto'
+        '400':
+          description: Ошибка валидации сроков (`acceptUntil > eventDate`) или полей
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/admin/events/{eventId}:
+    patch:
+      tags: [Admin & Moderation]
+      summary: "[CRUD: Update] Изменить черновик события или опубликовать его"
+      description: Доступно только для ролей `moderator`/`admin` и только пока событие находится в статусе `draft` (или `on_moderation`).
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchDraftEventRequest'
+      responses:
+        '200':
+          description: Черновик обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetailsDto'
+        '409':
+          description: Невозможно изменить уже опубликованное или завершённое событие (`INVALID_DRAFT_STATE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+    delete:
+      tags: [Admin & Moderation]
+      summary: "[CRUD: Delete] Удалить черновик события"
+      description: Физическое удаление разрешено только для черновиков (`status == draft`), по которым ещё нет ни одного прогноза.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      responses:
+        '204':
+          description: Черновик успешно удалён
+        '409':
+          description: Запрещено удалять опубликованное событие (`INVALID_DRAFT_STATE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/admin/events/{eventId}/resolve:
+    post:
+      tags: [Admin & Moderation]
+      summary: Зафиксировать официальный исход события, описание факта и источник (Settlement)
+      description: |
+        Создаёт запись в `resolutions`, переводит событие в статус `resolved`, инвалидирует кэш в Redis и ставит задачу `EventResolved` в `outbox_messages` для фонового расчёта выплат и винрейта в Hangfire.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveEventRequest'
+      responses:
+        '200':
+          description: Официальный результат зафиксирован, запущен пересчёт статистики
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetailsDto'
+        '409':
+          description: Событие уже рассчитано или ещё не открывалось
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
