@@ -1,4 +1,5 @@
 import { mockEvents } from '../data/mockEvents'
+import { acceptsPredictions, getDemoPrediction, sessionHeaders } from './predictions'
 import type {
   EventCatalogResponse,
   EventDetails,
@@ -24,7 +25,7 @@ export async function getEvents(
         event.descriptionSnippet.toLowerCase().includes(normalizedSearch)
       const matchesCategory =
         filters.category === 'all' || event.category === filters.category
-      const matchesActive = !filters.onlyActive || event.status === 'open'
+      const matchesActive = !filters.onlyActive || acceptsPredictions(event)
 
       return matchesSearch && matchesCategory && matchesActive
     })
@@ -55,10 +56,10 @@ export async function getEvent(eventId: string): Promise<EventDetails> {
     await mockDelay()
     const event = mockEvents.find((item) => item.id === eventId)
     if (!event) throw new Error('Событие не найдено')
-    return event
+    return { ...event, myPrediction: getDemoPrediction(eventId) ?? event.myPrediction }
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/v1/events/${eventId}`)
+  const response = await fetch(`${API_BASE_URL}/api/v1/events/${eventId}`, { headers: sessionHeaders(), cache: 'no-store' })
   if (response.status === 404) throw new Error('Событие не найдено')
   if (!response.ok) throw new Error('Не удалось загрузить событие')
   return response.json() as Promise<EventDetails>

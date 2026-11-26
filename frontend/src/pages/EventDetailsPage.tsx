@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getEvent } from '../api/events'
+import { acceptsPredictions, sessionHeaders, submitPrediction } from '../api/predictions'
 import { EventVisual } from '../components/EventVisual'
 import { Icon } from '../components/Icon'
+import { useWallet } from '../components/WalletProvider'
 import type { EventDetails } from '../types'
 import {
   categoryLabels,
@@ -13,6 +15,18 @@ import {
 
 export function EventDetailsPage() {
   const { eventId = '' } = useParams()
+  return <EventDetailsContent key={eventId} eventId={eventId} />
+}
+
+function EventDetailsContent({ eventId }: { eventId: string }) {
+  const { wallet, loading: walletLoading, error: walletError, isDemo } = useWallet()
+  const [outcomeId, setOutcomeId] = useState('')
+  const [stakeInput, setStakeInput] = useState('100')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submissionError, setSubmissionError] = useState('')
+  const request = useRef<{ outcomeId: string; stake: number; key: string } | null>(null)
+  const submitting = useRef(false)
+  const [deadlinePassed, setDeadlinePassed] = useState(false)
   const [event, setEvent] = useState<EventDetails | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -44,6 +58,14 @@ export function EventDetailsPage() {
       ignore = true
     }
   }, [eventId, requestKey])
+
+  useEffect(() => {
+    if (!event || !acceptsPredictions(event)) return
+    const timer = window.setInterval(() => {
+      if (!acceptsPredictions(event)) setDeadlinePassed(true)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [event])
 
   if (isLoading) {
     return (
@@ -82,7 +104,47 @@ export function EventDetailsPage() {
     )
   }
 
-  const isOpen = event.status === 'open'
+  const currentEvent = event
+  const isOpen = !deadlinePassed && acceptsPredictions(event)
+  const canPredict = isOpen && !event.myPrediction
+  const needsLogin = !isDemo && !sessionHeaders()
+
+  async function handlePrediction(submitEvent: FormEvent<HTMLFormElement>) {
+    submitEvent.preventDefault()
+    if (submitting.current || !canPredict || needsLogin || !wallet) return
+    const stake = Number(stakeInput)
+    if (!acceptsPredictions(currentEvent)) {
+      setDeadlinePassed(true)
+      return
+    }
+    if (!outcomeId || !stakeInput.trim() || !Number.isSafeInteger(stake) || stake < 0) {
+      setSubmissionError('Выбери исход и введи целое неотрицательное число баллов')
+      return
+    }
+    if (stake > wallet.balance) {
+      setSubmissionError('Недостаточно баллов для этой ставки')
+      return
+    }
+
+    if (request.current?.outcomeId !== outcomeId || request.current.stake !== stake) {
+      request.current = { outcomeId, stake, key: crypto.randomUUID() }
+    }
+    submitting.current = true
+    setIsSubmitting(true)
+    setSubmissionError('')
+    try {
+      const { prediction } = await submitPrediction(currentEvent, { outcomeId, stake }, request.current.key, isDemo)
+      setEvent({ ...currentEvent, myPrediction: prediction })
+      window.dispatchEvent(new Event('sporim:wallet-changed'))
+    } catch (cause) {
+      setSubmissionError(cause instanceof TypeError
+        ? 'Нет связи с сервером. Повтори отправку'
+        : cause instanceof Error ? cause.message : 'Не удалось отправить прогноз')
+    } finally {
+      submitting.current = false
+      setIsSubmitting(false)
+    }
+  }
   const winningOutcomeId = event.resolution?.winningOutcomeId
 
   return (
@@ -131,43 +193,86 @@ export function EventDetailsPage() {
             <h2>Варианты исхода</h2>
           </div>
 
-          <div className="outcome-list">
-            {event.outcomes.map((outcome, index) => {
-              const isWinner = winningOutcomeId === outcome.id
-              const isMine = event.myPrediction?.outcomeId === outcome.id
-              return (
-                <article
-                  className={`outcome-option ${index === 0 ? 'yes' : 'no'}${isWinner ? ' winner' : ''}`}
-                  key={outcome.id}
-                >
-                  <div className="outcome-title">
-                    <span>{outcome.code === 'YES' ? 'Да' : 'Нет'}</span>
-                    <div>
-                      <h3>{outcome.title}</h3>
-                      {isMine && <small>Ваш прогноз · {event.myPrediction?.stakeAmount} баллов</small>}
-                      {isWinner && <small><Icon name="check" size={15} /> Победивший исход</small>}
+          <form onSubmit={handlePrediction}>
+            <fieldset className="outcome-list prediction-outcomes" disabled={isSubmitting}>
+              <legend className="prediction-legend">{canPredict ? 'Выбери исход' : 'Исходы события'}</legend>
+              {event.outcomes.map((outcome, index) => {
+                const isWinner = winningOutcomeId === outcome.id
+                const isMine = event.myPrediction?.outcomeId === outcome.id
+                const OutcomeContainer = canPredict ? 'label' : 'div'
+                return (
+                  <OutcomeContainer
+                    className={`outcome-option ${index === 0 ? 'yes' : 'no'}${isWinner ? ' winner' : ''}${canPredict ? ' selectable' : ''}${canPredict && outcomeId === outcome.id ? ' selected' : ''}`}
+                    key={outcome.id}
+                  >
+                    {canPredict && (
+                      <input
+                        type="radio"
+                        name="prediction-outcome"
+                        value={outcome.id}
+                        checked={outcomeId === outcome.id}
+                        onChange={() => setOutcomeId(outcome.id)}
+                        aria-label={outcome.title}
+                        required
+                      />
+                    )}
+                    <div className="outcome-title">
+                      <span>{outcome.code === 'YES' ? 'Да' : 'Нет'}</span>
+                      <div>
+                        <h3>{outcome.title}</h3>
+                        {isMine && <small>Ваш прогноз · {event.myPrediction?.stakeAmount} баллов</small>}
+                        {isWinner && <small><Icon name="check" size={15} /> Победивший исход</small>}
+                      </div>
+                      <strong>{outcome.consensusPercent ?? 0}%</strong>
                     </div>
-                    <strong>{outcome.consensusPercent ?? 0}%</strong>
-                  </div>
-                  <div className="consensus-track">
-                    <span style={{ width: `${outcome.consensusPercent ?? 0}%` }} />
-                  </div>
-                </article>
-              )
-            })}
-          </div>
+                    <div className="consensus-track">
+                      <span style={{ width: `${outcome.consensusPercent ?? 0}%` }} />
+                    </div>
+                  </OutcomeContainer>
+                )
+              })}
+            </fieldset>
 
-          {isOpen ? (
-            <div className="panel-note">
-              <span>Прогнозы принимаются</span>
-              Выбор исхода и отправка прогноза появятся в следующей задаче
-            </div>
-          ) : (
-            <div className="panel-note closed">
-              <span>{statusLabels[event.status]}</span>
-              Новые прогнозы на это событие больше не принимаются
-            </div>
-          )}
+            {event.myPrediction ? (
+              <div className="panel-note" role="status">
+                <span>Прогноз зафиксирован</span>
+                {event.myPrediction.outcomeTitle} · {event.myPrediction.stakeAmount} б.
+                {event.myPrediction.shortCode && (
+                  <small>Код подтверждения · {event.myPrediction.shortCode}</small>
+                )}
+              </div>
+            ) : canPredict ? (
+              <fieldset className="prediction-form panel-note" disabled={isSubmitting || needsLogin || !wallet}>
+                <label htmlFor="prediction-stake">Ставка, игровые баллы</label>
+                <div className="prediction-controls">
+                  <input
+                    id="prediction-stake"
+                    type="number"
+                    min={0}
+                    max={wallet?.balance}
+                    step={1}
+                    required
+                    value={stakeInput}
+                    onChange={(change) => setStakeInput(change.target.value)}
+                  />
+                  <button className="button button-primary" type="submit" disabled={!outcomeId}>
+                    {isSubmitting ? 'Отправляем…' : 'Зафиксировать прогноз'}
+                  </button>
+                </div>
+                <small>{needsLogin
+                  ? 'Войди в аккаунт, чтобы отправить прогноз'
+                  : wallet
+                    ? `${isDemo ? 'Демо-баланс' : 'Доступно'} · ${wallet.balance} б. Прогноз нельзя изменить.`
+                    : walletLoading ? 'Загружаем баланс…' : walletError}</small>
+              </fieldset>
+            ) : (
+              <div className="panel-note closed">
+                <span>Приём прогнозов завершён</span>
+                Новые прогнозы на это событие больше не принимаются
+              </div>
+            )}
+            {submissionError && <p className="prediction-error" role="alert">{submissionError}</p>}
+          </form>
         </section>
 
         <aside className="details-sidebar">

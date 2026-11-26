@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fetchWallet, WalletError, type WalletSummary } from '../api/wallet'
-import { mockWallet } from '../data/mockWallet'
+import { getDemoWallet } from '../api/predictions'
 
 const isDemo = import.meta.env.VITE_USE_MOCK_API !== 'false'
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000'
@@ -35,7 +35,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     async function load() {
       try {
         const token = isDemo ? null : sessionStorage.getItem('sporim.accessToken')
-        const result = isDemo ? structuredClone(mockWallet) : await fetchWallet(baseUrl, token, controller.signal)
+        const result = isDemo ? getDemoWallet() : await fetchWallet(baseUrl, token, controller.signal)
         if (!controller.signal.aborted) setWallet(result)
       } catch (cause) {
         if (controller.signal.aborted) return

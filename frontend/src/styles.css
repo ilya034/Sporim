@@ -1355,3 +1355,71 @@ main {
     transition-duration: 0.01ms !important;
   }
 }
+
+.prediction-outcomes,
+.prediction-form {
+  min-inline-size: 0;
+}
+
+.prediction-outcomes {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.prediction-legend {
+  margin-bottom: 12px;
+  font-size: .875rem;
+}
+
+.outcome-option.selectable {
+  display: block;
+  position: relative;
+  cursor: pointer;
+}
+
+.outcome-option.selectable .outcome-title {
+  padding-right: 26px;
+}
+
+.outcome-option input[type="radio"] {
+  position: absolute;
+  top: 34px;
+  right: 18px;
+  margin: 0;
+  accent-color: #ff792e;
+}
+
+.outcome-option.selected,
+.outcome-option.selectable:focus-within {
+  border-color: #ff792e;
+}
+
+.prediction-form label {
+  font-weight: 700;
+}
+
+.prediction-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.prediction-controls input {
+  width: 110px;
+  padding: 8px 12px;
+  border: 1px solid #444650;
+  border-radius: 8px;
+  background: #111318;
+  color: inherit;
+  font: inherit;
+}
+
+.prediction-controls :disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.prediction-error {
+  color: #ff879c;
+}
