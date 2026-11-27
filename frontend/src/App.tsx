@@ -1,4 +1,6 @@
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { FavoritesProvider } from './components/FavoritesProvider'
+import { FavoritesPage } from './pages/FavoritesPage'
 import { Layout } from './components/Layout'
 import { EventDetailsPage } from './pages/EventDetailsPage'
 import { EventsPage } from './pages/EventsPage'
@@ -12,6 +14,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <EventsPage /> },
       { path: 'events/:eventId', element: <EventDetailsPage /> },
+      { path: 'favorites', element: <FavoritesPage /> },
       { path: 'wallet', element: <WalletPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
@@ -19,5 +22,5 @@ const router = createBrowserRouter([
 ])
 
 export default function App() {
-  return <RouterProvider router={router} />
+  return <FavoritesProvider><RouterProvider router={router} /></FavoritesProvider>
 }

@@ -7,6 +7,7 @@ import {
   statusLabels,
 } from '../utils/formatters'
 import { EventVisual } from './EventVisual'
+import { useFavorites } from './FavoritesProvider'
 import { Icon } from './Icon'
 
 interface EventCardProps {
@@ -14,10 +15,21 @@ interface EventCardProps {
 }
 
 export function EventCard({ event }: EventCardProps) {
+  const { favoriteIds, toggleFavorite } = useFavorites()
+  const isFavorite = favoriteIds.includes(event.id)
   const isClosed = event.status !== 'open'
 
   return (
     <article className="event-card">
+      <button
+        className="favorite-toggle"
+        type="button"
+        aria-label={`Избранное: ${event.title}`}
+        aria-pressed={isFavorite}
+        onClick={() => toggleFavorite(event.id)}
+      >
+        <span aria-hidden="true">{isFavorite ? '★' : '☆'}</span>
+      </button>
       <EventVisual category={event.category} compact />
 
       <div className="event-card-content">

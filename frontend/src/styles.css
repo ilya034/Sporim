@@ -514,6 +514,7 @@ main {
 }
 
 .event-card {
+  position: relative;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -762,6 +763,63 @@ main {
   border-color: rgb(255 79 112 / 30%);
   background: rgb(255 79 112 / 5%);
 }
+
+.favorite-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #111319;
+  color: #fff;
+  font-size: 25px;
+  cursor: pointer;
+}
+
+.favorite-toggle:hover,
+.favorite-toggle[aria-pressed="true"] {
+  color: var(--brand-light);
+}
+
+.favorite-toggle:focus-visible {
+  outline: 2px solid var(--brand-light);
+  outline-offset: 3px;
+}
+
+.favorites-page {
+  padding-top: 48px;
+  padding-bottom: 80px;
+}
+
+.favorites-page h1 {
+  margin: 0;
+  font-size: clamp(30px, 5vw, 48px);
+}
+
+.favorites-page > header {
+  margin-bottom: 28px;
+}
+
+.favorites-page > header p {
+  color: var(--text-secondary);
+}
+
+.favorites-page > .card-link {
+  margin-top: 24px;
+}
+
+.favorites-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 
 .card-link,
 .source-link {

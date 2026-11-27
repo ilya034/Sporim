@@ -15,6 +15,7 @@ export function Header() {
 
         <nav className="main-nav" aria-label="Основная навигация">
           <NavLink to="/" end>События</NavLink>
+          <NavLink to="/favorites">Избранное</NavLink>
           <NavLink to="/wallet">Кошелёк</NavLink>
           <a href="#how-it-works">Как это работает</a>
         </nav>
