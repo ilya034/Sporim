@@ -1482,3 +1482,31 @@ main {
   color: #ff879c;
 }
 .account-page > .detail-panel + .detail-panel { margin-top: 12px; }
+
+.profile-settings {
+  display: grid;
+  gap: 18px;
+  max-width: 650px;
+  padding: clamp(18px, 3vw, 30px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.profile-settings h2, .profile-settings p { margin: 0; }
+.profile-settings label { display: grid; gap: 8px; }
+.profile-settings input:not([type=checkbox]) {
+  width: 100%;
+  max-width: 490px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: inherit;
+  font: inherit;
+}
+.profile-settings .profile-toggle { display: flex; align-items: center; gap: 10px; }
+.profile-toggle input { accent-color: var(--brand); }
+.profile-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.account-page header p { color: var(--text-secondary); }
+.account-activity { margin-top: 24px; }
+.account-activity summary { cursor: pointer; padding-block: 12px; }

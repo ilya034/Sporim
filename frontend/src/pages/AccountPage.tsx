@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { getDemoWallet, getDemoPrediction, sessionHeaders } from '../api/predictions'
 import { mockEvents } from '../data/mockEvents'
 import type { UserPredictionSummary } from '../types'
@@ -12,6 +12,7 @@ interface Entry {
 }
 
 interface Account {
+  id: string
   displayName: string
   balance: number
   history: Entry[]
@@ -23,7 +24,7 @@ async function loadAccount(signal: AbortSignal): Promise<Account> {
       const prediction = getDemoPrediction(event.id) ?? event.myPrediction
       return prediction ? [{ eventId: event.id, eventTitle: event.title, prediction }] : []
     })
-    return { displayName: 'Демо-профиль', balance: getDemoWallet().balance, history }
+    return { id: 'demo', displayName: 'Демо-профиль', balance: getDemoWallet().balance, history }
   }
   const headers = sessionHeaders()
   if (!headers) throw new Error('Войдите в аккаунт, чтобы посмотреть историю')
@@ -34,7 +35,49 @@ async function loadAccount(signal: AbortSignal): Promise<Account> {
     return response.json()
   }
   const [profile, history] = await Promise.all([get('me'), get('predictions/my')])
-  return { displayName: profile.displayName, balance: profile.balance, history }
+  return { id: profile.id, displayName: profile.displayName, balance: profile.balance, history }
+}
+
+function ProfileSettings({ account }: { account: Account }) {
+  const navigate = useNavigate()
+  const storageKey = 'sporim.profile.' + account.id
+  const [settings, setSettings] = useState(() => {
+    const defaults = { name: account.displayName, email: '', notifications: true }
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null')
+      return saved && typeof saved.name === 'string' && typeof saved.email === 'string'
+        && typeof saved.notifications === 'boolean'
+        ? { name: String(saved.name), email: String(saved.email), notifications: Boolean(saved.notifications) }
+        : defaults
+    } catch { return defaults }
+  })
+  const [message, setMessage] = useState('')
+  return <form className="profile-settings" onChange={() => setMessage('')} onSubmit={event => {
+    event.preventDefault()
+    const name = settings.name.trim()
+    if (!name) { setMessage('Введите имя'); return }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ ...settings, name }))
+      setSettings({ ...settings, name })
+      setMessage('Изменения сохранены на этом устройстве')
+    } catch { setMessage('Не удалось сохранить изменения на этом устройстве') }
+  }}>
+    <h2>Личные данные</h2>
+    <label>Имя<input required maxLength={80} autoComplete="nickname" value={settings.name}
+      onChange={event => setSettings({ ...settings, name: event.target.value })} /></label>
+    <label>Email<input type="email" autoComplete="email" placeholder="name@example.com" value={settings.email}
+      onChange={event => setSettings({ ...settings, email: event.target.value })} /></label>
+    <label className="profile-toggle"><input type="checkbox" checked={settings.notifications}
+      onChange={event => setSettings({ ...settings, notifications: event.target.checked })} />
+      Уведомления об изменениях рынков и результатах</label>
+    <div className="profile-actions"><button className="button button-primary">Сохранить</button>
+      <button type="button" className="button button-secondary" onClick={() => {
+        sessionStorage.removeItem('sporim.accessToken')
+        window.dispatchEvent(new Event('sporim:session-changed'))
+        navigate('/')
+      }}>Выйти</button></div>
+    {message && <p role="status">{message}</p>}
+  </form>
 }
 
 export function AccountPage() {
@@ -59,11 +102,13 @@ export function AccountPage() {
   }, [attempt])
 
   return <section className="page-container favorites-page account-page">
-    <header><h1>Личный кабинет</h1></header>
+    <header><h1>Профиль и настройки</h1><p>Управляйте данными и уведомлениями.</p></header>
     {error ? <div role="alert">{error} <button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>Повторить</button></div>
       : !account ? <p role="status">Загружаем профиль…</p>
       : <>
-        <div className="detail-panel"><h2>{account.displayName}</h2>
+        <ProfileSettings key={account.id} account={account} />
+        <details className="account-activity"><summary>Баланс и история прогнозов</summary>
+        <div className="detail-panel">
           <p>Баланс · {account.balance.toLocaleString('ru-RU')} б.</p>
           <div className="favorites-actions"><Link className="card-link" to="/wallet">История операций</Link>
           <Link className="card-link" to="/favorites">Избранное</Link></div>
@@ -77,6 +122,7 @@ export function AccountPage() {
               <p>{prediction.outcomeTitle} · {prediction.stakeAmount} б.</p>
               <small>{formatDate(prediction.createdAt)} · {prediction.isWin == null ? 'Ожидает результата' : prediction.isWin ? 'Выигрыш' : 'Проигрыш'}</small>
             </article>)}
+        </details>
       </>}
   </section>
 }
