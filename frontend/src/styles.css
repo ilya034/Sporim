@@ -1481,3 +1481,4 @@ main {
 .prediction-error {
   color: #ff879c;
 }
+.account-page > .detail-panel + .detail-panel { margin-top: 12px; }

@@ -17,6 +17,7 @@ export function Header() {
           <NavLink to="/" end>События</NavLink>
           <NavLink to="/favorites">Избранное</NavLink>
           <NavLink to="/wallet">Кошелёк</NavLink>
+          <NavLink to="/account">Личный кабинет</NavLink>
           <a href="#how-it-works">Как это работает</a>
         </nav>
 
